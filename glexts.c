@@ -5,131 +5,146 @@
 #include <string.h>
 
 Display *dpy;
-
 PFNGLGETSTRINGIPROC glGetStringi;
 
-int glx_num_extensions;
-char **glx_extensions;
+int glx_exts_amt;
+char **glx_exts;
+int egl_exts_amt;
+char **egl_exts;
 
-int egl_num_extensions;
-char **egl_extensions;
-
-void fetch_glx_extensions() {
+void fetch_glx_exts() {
     XVisualInfo vinfo_template = {
         .visual = DefaultVisual(dpy, DefaultScreen(dpy))
     };
 
     int nitems_return;
-    XVisualInfo *vis = XGetVisualInfo(dpy, VisualNoMask, &vinfo_template, &nitems_return);
+    XVisualInfo *vis = XGetVisualInfo(dpy, VisualNoMask, &vinfo_template,
+        &nitems_return);
 
     GLXContext ctx = glXCreateContext(dpy, vis, NULL, True);
     glXMakeCurrent(dpy, None, ctx);
 
-    glGetIntegerv(GL_NUM_EXTENSIONS, &glx_num_extensions);
-    glx_extensions = malloc(glx_num_extensions * sizeof(char *));
-    for (int i = 0; i < glx_num_extensions; i++) {
-        glx_extensions[i] = (char *)glGetStringi(GL_EXTENSIONS, i);
+    XFree(vis);
+
+    glGetIntegerv(GL_NUM_EXTENSIONS, &glx_exts_amt);
+    glx_exts = malloc(glx_exts_amt * sizeof(char *));
+    for (int i = 0; i < glx_exts_amt; i++) {
+        glx_exts[i] = (char *)glGetStringi(GL_EXTENSIONS, i);
     }
 
     glXMakeCurrent(dpy, None, NULL);
     glXDestroyContext(dpy, ctx);
 }
 
-void fetch_egl_extensions() {
+void fetch_egl_exts() {
     EGLDisplay display = eglGetDisplay(dpy);
     eglInitialize(display, NULL, NULL);
 
-    int egl_num_configs = 0;
-    eglGetConfigs(display, NULL, 0, &egl_num_configs);
+    int egl_cfgs_amt;
+    eglGetConfigs(display, NULL, 0, &egl_cfgs_amt);
 
     EGLConfig config;
     eglChooseConfig(display, (EGLint[]){
         EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
         EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
+        // TODO(absolutelynothelix): don't hardcode component sizes, obtain them
+        // from some kind of visual (default one?).
         EGL_RED_SIZE, 8,
         EGL_GREEN_SIZE, 8,
         EGL_BLUE_SIZE, 8,
         EGL_ALPHA_SIZE, 8,
         EGL_CONFIG_CAVEAT, EGL_NONE,
         EGL_NONE
-    }, &config, 1, &egl_num_configs);
+    }, &config, 1, &egl_cfgs_amt);
 
     eglBindAPI(EGL_OPENGL_API);
 
     EGLContext ctx = eglCreateContext(display, config, EGL_NO_CONTEXT, NULL);
     eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, ctx);
 
-    glGetIntegerv(GL_NUM_EXTENSIONS, &egl_num_extensions);
-    egl_extensions = malloc(egl_num_extensions * sizeof(char *));
-    for (int i = 0; i < egl_num_extensions; i++) {
-        egl_extensions[i] = (char *)glGetStringi(GL_EXTENSIONS, i);
+    glGetIntegerv(GL_NUM_EXTENSIONS, &egl_exts_amt);
+    egl_exts = malloc(egl_exts_amt * sizeof(char *));
+    for (int i = 0; i < egl_exts_amt; i++) {
+        egl_exts[i] = (char *)glGetStringi(GL_EXTENSIONS, i);
     }
+
+    eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    eglDestroyContext(display, ctx);
+    eglTerminate(display);
 }
 
 int main() {
     dpy = XOpenDisplay(NULL);
-
     glGetStringi = (PFNGLGETSTRINGIPROC)glXGetProcAddress("glGetStringi");
 
-    fetch_glx_extensions();
-    fetch_egl_extensions();
+    fetch_glx_exts();
+    printf("Fetched %d GLX extensions.\n", glx_exts_amt);
 
-    int size = glx_num_extensions > egl_num_extensions ? glx_num_extensions : egl_num_extensions;
-    char **common = malloc(size * sizeof(char *));
+    fetch_egl_exts();
+    printf("Fetched %d EGL extensions.\n", egl_exts_amt);
+
+    int exts_amt = glx_exts_amt > egl_exts_amt ? glx_exts_amt : egl_exts_amt;
+
     int common_cnt = 0;
-    char **glx_specific = malloc(size * sizeof(char *));
+    char **common_exts = malloc(exts_amt * sizeof(char *));
     int glx_specific_cnt = 0;
-    char **egl_specific = malloc(size * sizeof(char *));
+    char **glx_specific_exts = malloc(exts_amt * sizeof(char *));
     int egl_specific_cnt = 0;
+    char **egl_specific_exts = malloc(exts_amt * sizeof(char *));
 
-    for (int i = 0; i < glx_num_extensions; i++) {
-        char* glx_ext = glx_extensions[i];
-        for (int j = 0; j < egl_num_extensions; j++) {
-            char* egl_ext = egl_extensions[j];
-            if (strcmp(glx_ext, egl_ext) == 0) {
-                common[common_cnt++] = glx_ext;
+    // XXX(absolutelynothelix): this is extremely inefficient, but I don't care.
+
+    // First pass: find common extensions (that are both in glx_exts and
+    // egl_exts) and GLX-specific extensions (that are in glx_exts but not in
+    // egl_exts).
+    for (int i = 0; i < glx_exts_amt; i++) {
+        for (int j = 0; j < egl_exts_amt; j++) {
+            if (strcmp(glx_exts[i], egl_exts[j]) == 0) {
+                common_exts[common_cnt++] = glx_exts[i];
                 break;
-            } else if (j == egl_num_extensions - 1) {
-                glx_specific[glx_specific_cnt++] = glx_ext;
+            } else if (j == egl_exts_amt - 1) {
+                glx_specific_exts[glx_specific_cnt++] = glx_exts[i];
             }
         }
     }
 
-    for (int i = 0; i < egl_num_extensions; i++) {
-        char* egl_ext = egl_extensions[i];
-        for (int j = 0; j < glx_num_extensions; j++) {
-            char* glx_ext = glx_extensions[j];
-            if (strcmp(egl_ext, glx_ext) == 0) {
+    // Second pass: find EGL-specific extensions (that are in egl_exts but not
+    // in glx_exts).
+    for (int i = 0; i < egl_exts_amt; i++) {
+        for (int j = 0; j < glx_exts_amt; j++) {
+            if (strcmp(egl_exts[i], glx_exts[j]) == 0) {
                 break;
-            } else if (j == glx_num_extensions - 1) {
-                egl_specific[egl_specific_cnt++] = egl_ext;
+            } else if (j == glx_exts_amt - 1) {
+                egl_specific_exts[egl_specific_cnt++] = egl_exts[i];
             }
         }
     }
 
-    free(glx_extensions);
-    free(egl_extensions);
+    free(glx_exts);
+    free(egl_exts);
 
     printf("Common extensions (%d):\n", common_cnt);
     for (int i = 0; i < common_cnt; i++) {
-        printf("\t%s\n", common[i]);
+        printf("\t%s\n", common_exts[i]);
     }
 
-    free(common);
+    free(common_exts);
 
     printf("GLX-specific extensions (%d):\n", glx_specific_cnt);
     for (int i = 0; i < glx_specific_cnt; i++) {
-        printf("\t%s\n", glx_specific[i]);
+        printf("\t%s\n", glx_specific_exts[i]);
     }
 
-    free(glx_specific);
+    free(glx_specific_exts);
 
     printf("EGL-specific extensions (%d):\n", egl_specific_cnt);
     for (int i = 0; i < egl_specific_cnt; i++) {
-        printf("\t%s\n", egl_specific[i]);
+        printf("\t%s\n", egl_specific_exts[i]);
     }
 
-    free(egl_specific);
+    free(egl_specific_exts);
 
     XCloseDisplay(dpy);
+
+    return 0;
 }
