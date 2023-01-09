@@ -31,10 +31,8 @@ void fetch_egl_exts() {
     EGLDisplay display = eglGetDisplay(dpy);
     eglInitialize(display, NULL, NULL);
 
-    int egl_cfgs_amt;
-    eglGetConfigs(display, NULL, 0, &egl_cfgs_amt);
-
     EGLConfig config;
+    int nconfigs = 1;
     eglChooseConfig(display, (EGLint[]){
         EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
         EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
@@ -44,7 +42,7 @@ void fetch_egl_exts() {
         EGL_BLUE_SIZE, __builtin_popcountl(vis->blue_mask),
         EGL_CONFIG_CAVEAT, EGL_NONE,
         EGL_NONE
-    }, &config, 1, &egl_cfgs_amt);
+    }, &config, nconfigs, &nconfigs);
 
     eglBindAPI(EGL_OPENGL_API);
 
