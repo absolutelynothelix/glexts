@@ -5,6 +5,7 @@
 #include <string.h>
 
 Display *dpy;
+XVisualInfo *vis;
 PFNGLGETSTRINGIPROC glGetStringi;
 
 int glx_exts_amt;
@@ -13,18 +14,8 @@ int egl_exts_amt;
 char **egl_exts;
 
 void fetch_glx_exts() {
-    XVisualInfo vinfo_template = {
-        .visual = DefaultVisual(dpy, DefaultScreen(dpy))
-    };
-
-    int nitems_return;
-    XVisualInfo *vis = XGetVisualInfo(dpy, VisualNoMask, &vinfo_template,
-        &nitems_return);
-
     GLXContext ctx = glXCreateContext(dpy, vis, NULL, True);
     glXMakeCurrent(dpy, None, ctx);
-
-    XFree(vis);
 
     glGetIntegerv(GL_NUM_EXTENSIONS, &glx_exts_amt);
     glx_exts = malloc(glx_exts_amt * sizeof(char *));
@@ -47,12 +38,10 @@ void fetch_egl_exts() {
     eglChooseConfig(display, (EGLint[]){
         EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
         EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
-        // TODO(absolutelynothelix): don't hardcode component sizes, obtain them
-        // from some kind of visual (default one?).
-        EGL_RED_SIZE, 8,
-        EGL_GREEN_SIZE, 8,
-        EGL_BLUE_SIZE, 8,
-        EGL_ALPHA_SIZE, 8,
+        // XXX(absolutelynothelix): I'm not sure about the alpha one.
+        EGL_RED_SIZE, __builtin_popcountl(vis->red_mask),
+        EGL_GREEN_SIZE, __builtin_popcountl(vis->green_mask),
+        EGL_BLUE_SIZE, __builtin_popcountl(vis->blue_mask),
         EGL_CONFIG_CAVEAT, EGL_NONE,
         EGL_NONE
     }, &config, 1, &egl_cfgs_amt);
@@ -75,6 +64,14 @@ void fetch_egl_exts() {
 
 int main() {
     dpy = XOpenDisplay(NULL);
+
+    XVisualInfo vinfo_template = {
+        .visual = DefaultVisual(dpy, DefaultScreen(dpy))
+    };
+
+    int nitems_return;
+    vis = XGetVisualInfo(dpy, VisualNoMask, &vinfo_template, &nitems_return);
+
     glGetStringi = (PFNGLGETSTRINGIPROC)glXGetProcAddress("glGetStringi");
 
     fetch_glx_exts();
@@ -82,6 +79,9 @@ int main() {
 
     fetch_egl_exts();
     printf("Fetched %d EGL extensions.\n", egl_exts_amt);
+
+    XFree(vis);
+    XCloseDisplay(dpy);
 
     int exts_amt = glx_exts_amt > egl_exts_amt ? glx_exts_amt : egl_exts_amt;
 
@@ -143,8 +143,6 @@ int main() {
     }
 
     free(egl_specific_exts);
-
-    XCloseDisplay(dpy);
 
     return 0;
 }
